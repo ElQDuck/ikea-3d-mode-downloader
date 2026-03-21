@@ -4,8 +4,9 @@
   "description": "A browser app to download 3d models of the furniture from the IKEA website to use it in Sweet Home 3D. This is a try out project on how to use AI for such tasks.",
   "main": "ikea-3d-model-downloader.user.js",
   "scripts": {
-    "build": "webpack --mode production",
-    "dev": "webpack serve --mode development",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "test": "jest",
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit"
@@ -17,7 +18,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "bugs": {
     "url": "https://github.com/ElQDuck/ikea-3d-mode-downloader/issues"
   },
@@ -34,10 +34,8 @@
     "@types/three": "^0.183.1",
     "jest": "^30.3.0",
     "jest-environment-jsdom": "^30.3.0",
+    "terser": "^5.46.1",
     "ts-jest": "^29.4.6",
-    "ts-loader": "^9.5.4",
-    "webpack": "^5.105.4",
-    "webpack-cli": "^7.0.2",
-    "webpack-dev-server": "^5.2.3"
+    "vite": "^8.0.1"
   }
 }

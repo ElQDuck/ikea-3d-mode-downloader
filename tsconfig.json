@@ -19,7 +19,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "noImplicitAny": true,
     "noImplicitThis": true,
@@ -27,6 +27,9 @@
     "noUnusedParameters": false,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
+    "incremental": true,
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "pretty": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],

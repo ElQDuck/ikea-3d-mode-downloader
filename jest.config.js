@@ -19,6 +19,8 @@ module.exports = {
     '^@utils/(.*)$': '<rootDir>/src/utils/$1',
     '^@components/(.*)$': '<rootDir>/src/components/$1',
     '^@ui/(.*)$': '<rootDir>/src/ui/$1',
+    '^three/examples/jsm/loaders/GLTFLoader$': '<rootDir>/node_modules/three/examples/jsm/loaders/GLTFLoader.js',
+    '^three/examples/jsm/exporters/OBJExporter$': '<rootDir>/node_modules/three/examples/jsm/exporters/OBJExporter.js',
   },
   collectCoverageFrom: [
     'src/**/*.ts',
@@ -31,11 +33,7 @@ module.exports = {
   ],
   globals: {
     'ts-jest': {
-      tsconfig: {
-        jsx: 'react',
-        esModuleInterop: true,
-        allowSyntheticDefaultImports: true,
-      },
+      tsconfig: 'tsconfig.test.json',
     },
   },
   transformIgnorePatterns: [
