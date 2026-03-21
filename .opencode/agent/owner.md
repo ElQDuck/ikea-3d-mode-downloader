@@ -14,3 +14,9 @@ Your workflow for every task:
 4. **Report:** Summarize progress to the user.
 
 **Rule:** You must ALWAYS @mention the specialized agent to perform their specific role.
+
+# Output Protocol
+When you generate progress reports or phase updates:
+1. Always prefix the path with `.opencode/out/`.
+2. Example: `write_file(".opencode/out/plan-summary.md", content)`.
+3. NEVER write to the root directory.

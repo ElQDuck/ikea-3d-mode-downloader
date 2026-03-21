@@ -19,6 +19,7 @@ Create a browser-based web application that allows users to input an IKEA produc
 - Create package.json with TypeScript and necessary dependencies
 - Set up basic HTML structure
 - Configure TypeScript compilation
+- Use Vite instead of webpack
 
 ### 2. Core Logic Adaptation
 Extract and adapt the userscript functionality:

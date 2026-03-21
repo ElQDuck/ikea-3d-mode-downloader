@@ -186,3 +186,14 @@
 - Validate file uploads (type, size)
 - Use HTTPS in production
 - Keep dependencies updated
+
+## Tool-Only File Generation
+- **DO NOT** manually create or edit the following files: `package-lock.json`, `node_modules/`, `dist/`, or `.build/`.
+- **ENFORCEMENT:** If a dependency change is needed, the @developer MUST run `npm install [package]` via the `bash` tool. 
+- The agent is forbidden from using `write_file` or `patch_file` on any lockfiles.
+
+## File & Artifact Management
+- **STRICT ROOT CLEANLINESS:** Do not create any Markdown (.md) or status files in the repository root.
+- **MANDATORY OUTPUT DIRECTORY:** All task reports, phase logs, test results, and temporary documentation MUST be written to `.opencode/out/`.
+- **NAMING CONVENTION:** Use lowercase, kebab-case for these files (e.g., `.opencode/out/phase-2.md` instead of `PHASE_2_.md`).
+- **CLEANUP:** Any file created during a task that is not part of the source code must be deleted or moved to `.opencode/out/` before finishing.
