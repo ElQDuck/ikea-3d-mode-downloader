@@ -60,14 +60,15 @@ export class IkeaScraperImpl implements IkeaScraper {
         }
       }
 
-      // Try extraction strategies in order
-      const result =
-        (await this._tryNetworkInterception(productUrl)) ||
-        (await this._tryDomScanning(productUrl)) ||
-        (await this._tryScriptGlobals(productUrl)) ||
-        (await this._tryDataAttributes(productUrl)) ||
-        (await this._tryPerformanceObserver(productUrl)) ||
-        (await this._tryManualMode())
+       // Try extraction strategies in order
+       const result =
+         (await this._tryRoteraApi(productUrl)) ||
+         (await this._tryNetworkInterception(productUrl)) ||
+         (await this._tryDomScanning(productUrl)) ||
+         (await this._tryScriptGlobals(productUrl)) ||
+         (await this._tryDataAttributes(productUrl)) ||
+         (await this._tryPerformanceObserver(productUrl)) ||
+         (await this._tryManualMode())
 
       if (!result) {
         return {
@@ -278,6 +279,108 @@ export class IkeaScraperImpl implements IkeaScraper {
     logger.info('Disabling network interception')
     this._networkInterceptionEnabled = false
     this._interceptedUrls.clear()
+  }
+
+  /**
+   * Parse IKEA URL to extract country, language, and product ID
+   */
+  private _parseIkeaUrl(url: string): { productId: string | null; country: string | null; language: string | null } {
+    const result = {
+      productId: null as string | null,
+      country: null as string | null,
+      language: null as string | null,
+    }
+
+    try {
+      // Extract country and language from URL
+      const countryLanguageMatch = url.match(/ikea\.com\/([^/]+)\/([^/]+)/)
+      if (countryLanguageMatch) {
+        result.country = countryLanguageMatch[1]
+        result.language = countryLanguageMatch[2]
+      }
+
+      // Extract product ID from URL
+      const productIdMatch = url.match(/s(\d+)(?:\/|#|\?|$)/)
+      if (productIdMatch) {
+        result.productId = productIdMatch[1]
+      }
+    } catch {
+      // URL parsing failed
+    }
+
+    return result
+  }
+
+  /**
+   * Try to extract GLB URL via Rotera API
+   */
+  private async _tryRoteraApi(productUrl: string): Promise<GlbExtractionResult | null> {
+    try {
+      const { productId, country, language } = this._parseIkeaUrl(productUrl)
+
+      if (!productId || !country || !language) {
+        logger.debug('Could not extract all required parameters from URL for Rotera API')
+        return null
+      }
+
+      const apiUrl = `https://web-api.ikea.com/${country}/${language}/rotera/data/model/${productId}/`
+      logger.info('Attempting Rotera API extraction:', apiUrl)
+
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), this._config.timeout)
+
+      const response = await fetch(apiUrl, {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json',
+        },
+      })
+
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        logger.debug(`Rotera API returned ${response.status}: ${response.statusText}`)
+        return null
+      }
+
+      const data = await response.json() as Record<string, unknown>
+
+      // Validate response structure and extract modelUrl
+      if (!data || typeof data !== 'object') {
+        logger.debug('Rotera API response is not a valid object')
+        return null
+      }
+
+      const modelUrl = data.modelUrl
+      if (!modelUrl || typeof modelUrl !== 'string') {
+        logger.debug('Rotera API response does not contain modelUrl field')
+        return null
+      }
+
+      // Handle relative paths
+      let glbUrl = modelUrl
+      if (!glbUrl.startsWith('http')) {
+        glbUrl = `https://web-api.ikea.com/${country}/${language}${glbUrl}`
+      }
+
+      // Ensure GLB extension
+      if (!glbUrl.endsWith('.glb')) {
+        logger.debug('Model URL from Rotera API does not end with .glb extension')
+        return null
+      }
+
+      logger.info('Successfully extracted GLB URL from Rotera API:', glbUrl)
+
+      return {
+        glbUrl,
+        productName: this._extractProductName(glbUrl),
+        fileName: this._extractFileName(glbUrl),
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      logger.debug('Rotera API extraction failed:', message)
+      return null
+    }
   }
 
   /**
