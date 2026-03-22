@@ -83,6 +83,46 @@ body {
   gap: var(--spacing-lg);
 }
 
+.info-section {
+  padding: var(--spacing-md);
+  background-color: rgba(0, 81, 186, 0.1);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--border-radius);
+  color: var(--color-text);
+}
+
+.info-section h2 {
+  margin-bottom: var(--spacing-md);
+  color: var(--color-primary);
+  font-size: 1.1rem;
+}
+
+.info-section ol {
+  margin-left: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.info-section li {
+  margin-bottom: var(--spacing-xs);
+  line-height: 1.8;
+}
+
+.info-note {
+  font-size: 0.9rem;
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-sm);
+  background-color: rgba(255, 193, 7, 0.1);
+  border-left: 3px solid #ffc107;
+  padding-left: var(--spacing-sm);
+}
+
+.info-note code {
+  background-color: var(--color-surface);
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+}
+
 .input-section {
   display: flex;
   flex-direction: column;
@@ -248,6 +288,37 @@ body {
   font-weight: 500;
 }
 
+.error-tips {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-md);
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: var(--border-radius);
+}
+
+.error-tips h3 {
+  margin-bottom: var(--spacing-sm);
+  font-size: 1rem;
+  color: var(--color-error-text);
+}
+
+.error-tips ul {
+  margin-left: var(--spacing-md);
+}
+
+.error-tips li {
+  margin-bottom: var(--spacing-xs);
+  color: var(--color-error-text);
+  line-height: 1.6;
+}
+
+.error-tips code {
+  background-color: rgba(255, 255, 255, 0.2);
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  color: var(--color-error-text);
+}
+
 .app-footer {
   text-align: center;
   padding-top: var(--spacing-lg);
@@ -255,6 +326,17 @@ body {
   border-top: 1px solid var(--color-border);
   font-size: 0.9rem;
   color: var(--color-text-muted);
+}
+
+.app-footer a {
+  color: var(--color-primary);
+  text-decoration: none;
+  transition: color var(--transition-duration);
+}
+
+.app-footer a:hover {
+  color: var(--color-primary-hover);
+  text-decoration: underline;
 }
 
 /* Responsive design */

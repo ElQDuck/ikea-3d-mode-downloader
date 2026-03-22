@@ -11,20 +11,39 @@
     <div id="app" class="app-container">
       <header class="app-header">
         <h1 class="app-title">IKEA 3D Model Downloader</h1>
-        <p class="app-subtitle">Download 3D models for Sweet Home 3D</p>
+        <p class="app-subtitle">Download 3D models from IKEA for Sweet Home 3D and other software</p>
       </header>
 
       <main class="app-main">
+        <div class="info-section">
+          <h2>ℹ️ How to Use</h2>
+          <ol>
+            <li>Paste an IKEA product URL below (e.g., from ikea.com/de/de or ikea.com/no/no)</li>
+            <li>Click "Process" to start the extraction</li>
+            <li>If the 3D model doesn't load automatically, you'll see a message asking you to click "View in 3D" on the IKEA page</li>
+            <li>Once the GLB file is found, it will be downloaded</li>
+            <li>Download the model as a ZIP file with OBJ format and textures</li>
+          </ol>
+          <p class="info-note">
+            ⚠️ <strong>Note:</strong> This browser version has limitations. For best results, 
+            use the command line tool: <code>npm run test:integration</code>
+          </p>
+        </div>
+
         <div class="input-section">
           <label for="url-input" class="input-label">IKEA Product URL</label>
           <input
             id="url-input"
             type="url"
-            placeholder="https://www.ikea.com/..."
+            placeholder="https://www.ikea.com/de/de/p/..."
             class="url-input"
             aria-label="IKEA product URL"
           />
-          <p class="input-help">Paste the URL of an IKEA furniture product</p>
+          <p class="input-help">
+            Example: https://www.ikea.com/de/de/p/poaeng-schaukelstuhl...
+            <br/>
+            Supported: 🇩🇪 Germany, 🇳🇴 Norway, 🇸🇪 Sweden, 🇬🇧 UK, 🇺🇸 USA, 🇫🇷 France, and more
+          </p>
         </div>
 
         <div class="button-section">
@@ -55,11 +74,21 @@
           <button id="retry-button" class="btn btn-secondary" aria-label="Retry processing">
             Retry
           </button>
+          <div class="error-tips">
+            <h3>💡 Troubleshooting Tips:</h3>
+            <ul>
+              <li>Make sure you're using a valid IKEA product URL</li>
+              <li>Try using a product from Germany (ikea.com/de/de) - they work most reliably</li>
+              <li>For best results, use the command line: <code>npm run test:integration</code></li>
+              <li>Check the browser console (F12) for detailed error messages</li>
+            </ul>
+          </div>
         </div>
       </main>
 
       <footer class="app-footer">
-        <p>No data is sent to external servers. All processing happens in your browser.</p>
+        <p>✅ Privacy: No data is sent to external servers. All processing happens in your browser.</p>
+        <p>📖 <a href="https://github.com/ElQDuck/ikea-3d-mode-downloader" target="_blank">View source code</a></p>
       </footer>
     </div>
 
