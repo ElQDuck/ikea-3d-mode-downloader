@@ -47,11 +47,13 @@ export interface TempFileManager {
 }
 
 export class TempFileManagerImpl implements TempFileManager {
-  private _tmpBaseDir: string = './tmp'
+  private _tmpBaseDir: string = ''
 
   constructor(tmpDir?: string) {
     if (tmpDir) {
       this._tmpBaseDir = tmpDir
+    } else {
+      this._tmpBaseDir = path.resolve(process.cwd(), 'tmp')
     }
   }
 

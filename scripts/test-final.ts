@@ -5,8 +5,10 @@
  */
 
 import { IkeaScraperPuppeteerImpl } from '../src/components/browser-scraper'
+import { NetworkInterceptionImpl } from '../src/components/network-interceptor'
 import type { IkeaScraperPuppeteerConfig } from '../src/types'
 import { logger } from '../src/utils/logger'
+import { validateFullGlb } from '../src/utils/validate-glb'
 import { PuppeteerBrowserManager } from '../src/components/browser-manager'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -45,101 +47,48 @@ async function extractAndDownloadGlb(
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 })
 
     logger.info('  Executing JavaScript to find GLB URL...')
-    
-    // Extended JavaScript execution with multiple strategies
-    const glbUrl = await page.evaluate(() => {
-      return new Promise<string | null>((resolve) => {
-        // Strategy 1: Check window globals
-        const checkGlobals = () => {
-          const globals = (window as any)
-          const keys = [
-            'glbUrl', 'modelUrl', '__IKEA_GLB_URL__', 
-            'rotera', 'model', 'viewer', '__model__',
-            '_glb', '_model'
-          ]
-          for (const key of keys) {
-            if (globals[key] && typeof globals[key] === 'string' && globals[key].includes('.glb')) {
-              return globals[key]
-            }
+    // Prefer network interception (CDP/page response monitoring) to detect
+    // GLB downloads. This avoids executing large in-page scripts which can
+    // fail when transpiler helpers are present.
+    const interception = new NetworkInterceptionImpl(page)
+    await interception.start()
+
+    // Trigger navigation / model load
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 })
+
+    // Try to auto-click possible 3D viewer buttons (small inline function)
+    try {
+      await page.evaluate(() => {
+        const selectors = ['[class*="3d-viewer"]', '[id*="viewer"]', 'button']
+        for (const sel of selectors) {
+          const el = document.querySelector(sel)
+          if (el && el instanceof HTMLElement) {
+            el.click()
+            break
           }
-          return null
         }
-
-        // Strategy 2: Search script contents
-        const checkScripts = () => {
-          for (const script of document.scripts) {
-            if (script.textContent && script.textContent.length < 1000000) {
-              const match = script.textContent.match(/https:\/\/[^"'\s<>]+\.glb/g)
-              if (match) {
-                // Return the first valid-looking one
-                for (const m of match) {
-                  if (!m.includes('google') && !m.includes('cdn') && m.includes('glb')) {
-                    return m
-                  }
-                }
-              }
-            }
-          }
-          return null
-        }
-
-        // Strategy 3: Check all DOM elements
-        const checkDom = () => {
-          const images = document.querySelectorAll('img, picture, source')
-          for (const el of images) {
-            for (const attr of el.attributes) {
-              if (attr.value && attr.value.includes('.glb')) {
-                return attr.value
-              }
-            }
-          }
-          return null
-        }
-
-        // Strategy 4: Monitor fetch/XHR
-        let foundUrl: string | null = null
-        const originalFetch = window.fetch
-        window.fetch = ((...args: any[]) => {
-          const url = args[0]
-          const urlStr = typeof url === 'string' ? url : url?.url || ''
-          if (urlStr.includes('.glb')) {
-            foundUrl = urlStr
-          }
-          return originalFetch(...args)
-        }) as any
-
-        // Try immediately
-        let result = checkGlobals() || checkScripts() || checkDom()
-        if (result) {
-          resolve(result)
-          return
-        }
-
-        // Wait and retry
-        let attempts = 0
-        const retryInterval = setInterval(() => {
-          attempts++
-          result = foundUrl || checkGlobals() || checkScripts() || checkDom()
-          if (result || attempts > 30) {
-            clearInterval(retryInterval)
-            resolve(result)
-          }
-        }, 200)
-
-        // Max wait 6 seconds
-        setTimeout(() => {
-          clearInterval(retryInterval)
-          resolve(foundUrl || checkGlobals() || checkScripts() || checkDom())
-        }, 6000)
       })
-    })
+    } catch (e) {
+      // Non-fatal
+      logger.debug(`Auto-click failed: ${e}`)
+    }
 
-    if (!glbUrl) {
-      logger.warn('  ⚠️  No GLB URL found after JavaScript evaluation')
+    // Wait a short while for network requests to occur
+    await new Promise((r) => setTimeout(r, 2500))
+
+    // Give some time for in-page network requests to complete
+    await new Promise((r) => setTimeout(r, 1500))
+
+    await interception.stop()
+
+    const best = interception.getBestCandidate()
+    if (!best) {
+      logger.warn('  ⚠️  No GLB candidate detected via network interception')
       return null
     }
 
-    logger.info(`  ✓ Found GLB URL: ${glbUrl.substring(0, 100)}...`)
+    const glbUrl = best.url
+    logger.info(`  ✓ Found GLB URL: ${glbUrl.substring(0, 200)}...`)
 
     // Download the GLB
     logger.info('  Downloading GLB file...')
@@ -156,10 +105,57 @@ async function extractAndDownloadGlb(
       return null
     }
 
-    const buffer = await response.arrayBuffer()
-    logger.info(`  ✓ Downloaded: ${(buffer.byteLength / 1024 / 1024).toFixed(2)} MB`)
+    const MAX_FULL_SAVE_SIZE = 1000 * 1024 * 1024 // 1000MB
 
-    return { glbUrl, buffer }
+    const contentLengthHeader = response.headers.get('content-length')
+    const contentType = response.headers.get('content-type') || ''
+    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : undefined
+
+    if (contentType && (contentType.toLowerCase().startsWith('text/') || contentType.toLowerCase().includes('javascript') || contentType.toLowerCase().includes('html'))) {
+      logger.warn(`  ✗ Remote reported textual content-type: ${contentType}`)
+      return null
+    }
+
+    if (typeof contentLength === 'number' && contentLength > MAX_FULL_SAVE_SIZE) {
+      logger.error(`  ✗ Remote file too large to save: ${contentLength} bytes`)
+      return null
+    }
+
+    // Read with timeout and max size enforcement
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 10000)
+    try {
+      const ab = await response.arrayBuffer()
+      clearTimeout(timer)
+      const buf = Buffer.from(ab)
+      const valid = validateFullGlb(buf)
+      if (valid.ok) {
+        logger.info(`  ✓ Downloaded: ${(buf.length / 1024 / 1024).toFixed(2)} MB`)
+        return { glbUrl, buffer: ab }
+      } else {
+        // Save invalid buffer and metadata
+        const ts = Date.now()
+        const safeName = url.replace(/https?:\/\//, '').replace(/[^a-z0-9]/gi, '_').toLowerCase()
+        const invalidDir = path.join(process.cwd(), 'tmp', 'invalid')
+        if (!fs.existsSync(invalidDir)) fs.mkdirSync(invalidDir, { recursive: true })
+        const binPath = path.join(invalidDir, `${ts}-${safeName}.bin`)
+        const metaPath = path.join(invalidDir, `${ts}-${safeName}.json`)
+        fs.writeFileSync(binPath, buf)
+        const meta = {
+          url: glbUrl,
+          headers: Object.fromEntries(response.headers.entries()),
+          reason: valid.reason,
+          peek: buf.slice(0, 64).toString('hex'),
+        }
+        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2))
+        logger.warn(`  ✗ Invalid GLB saved: ${binPath}, metadata: ${metaPath}`)
+        return null
+      }
+    } catch (e) {
+      clearTimeout(timer)
+      logger.error(`  ✗ Error reading response: ${String(e)}`)
+      return null
+    }
   } finally {
     await page.close()
   }
@@ -181,6 +177,7 @@ async function runFinalTest() {
       headless: true,
       timeout: 60000,
       tmpDir: tmpDir,
+      wsEndpoint: process.env.BROWSER_WS_ENDPOINT || undefined,
     },
     modelLoadTimeout: 15000,
     jsExecutionTimeout: 15000,
@@ -192,6 +189,10 @@ async function runFinalTest() {
   }
 
   const browserManager = new PuppeteerBrowserManager()
+  // Allow passing a WS endpoint via env var
+  if (process.env.BROWSER_WS_ENDPOINT) {
+    ;(config.browserConfig as any).wsEndpoint = process.env.BROWSER_WS_ENDPOINT
+  }
   await browserManager.initialize(config.browserConfig)
 
   let passedTests = 0
@@ -203,8 +204,17 @@ async function runFinalTest() {
       logger.info(`\n📦 TEST: ${testCase.name}`)
       logger.info(`   URL: ${testCase.url.substring(0, 80)}...`)
 
-      try {
-        const result = await extractAndDownloadGlb(testCase.url, browserManager)
+        try {
+        // Retry download/extract up to 2 attempts
+        let result: { glbUrl: string; buffer: ArrayBuffer } | null = null
+        let attempt = 0
+        while (attempt < 2) {
+          attempt++
+          result = await extractAndDownloadGlb(testCase.url, browserManager)
+          if (result) break
+          logger.info(`Retrying extraction/download (attempt ${attempt + 1}) after delay...`)
+          await new Promise(r => setTimeout(r, 1500))
+        }
 
         if (!result) {
           logger.error(`  ✗ FAILED - Could not extract/download GLB`)
@@ -218,6 +228,7 @@ async function runFinalTest() {
         const fileName = `${safeFileName}.glb`
         const outputPath = path.join(outputDir, fileName)
         
+        // result is confirmed non-null above
         fs.writeFileSync(outputPath, Buffer.from(result.buffer))
         
         logger.info(`  ✓ SUCCESS`)

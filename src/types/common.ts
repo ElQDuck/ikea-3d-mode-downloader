@@ -65,6 +65,8 @@ export interface BrowserSessionConfig {
   }
   args?: string[]
   tmpDir: string
+  /** Optional WebSocket endpoint to connect to an existing Chromium instance */
+  wsEndpoint?: string
 }
 
 export interface BrowserResourceSnapshot {
@@ -186,4 +188,3 @@ export interface IkeaRegionInfo {
   locale: string
   isSupportedRegion: boolean
 }
-

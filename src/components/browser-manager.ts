@@ -27,6 +27,7 @@ export class PuppeteerBrowserManager implements BrowserManager {
   private _createdAt: number = Date.now()
   private _healthCheckInterval: NodeJS.Timeout | null = null
   private _tempFileManager: TempFileManagerImpl
+  private _isConnected: boolean = false
 
   constructor() {
     this._tempFileManager = new TempFileManagerImpl()
@@ -44,11 +45,31 @@ export class PuppeteerBrowserManager implements BrowserManager {
       const args = config.args || []
       args.push('--no-sandbox', '--disable-setuid-sandbox')
 
-      this._browser = await puppeteer.launch({
-        headless: config.headless,
-        args,
-        defaultViewport: config.viewport || { width: 1920, height: 1080 },
-      })
+      // Support connecting to an existing browser via WebSocket endpoint
+      const wsEndpoint = (config as any).wsEndpoint
+      if (wsEndpoint) {
+        logger.info(`Connecting to existing browser at ${wsEndpoint}`)
+        try {
+          this._browser = await puppeteer.connect({
+            browserWSEndpoint: wsEndpoint,
+            defaultViewport: config.viewport || { width: 1920, height: 1080 },
+          }) as Browser
+          this._isConnected = true
+        } catch (err) {
+          logger.warn(`Failed to connect to remote browser at ${wsEndpoint}: ${err}. Falling back to launching local browser.`)
+          this._browser = await puppeteer.launch({
+            headless: config.headless,
+            args,
+            defaultViewport: config.viewport || { width: 1920, height: 1080 },
+          })
+        }
+      } else {
+        this._browser = await puppeteer.launch({
+          headless: config.headless,
+          args,
+          defaultViewport: config.viewport || { width: 1920, height: 1080 },
+        })
+      }
 
       this._isReady = true
       logger.info('Puppeteer browser launched successfully')
@@ -113,9 +134,18 @@ export class PuppeteerBrowserManager implements BrowserManager {
         }
       }
 
-      // Close browser
+      // Close or disconnect browser depending on how it was created
       if (this._browser) {
-        await this._browser.close()
+        try {
+          if (this._isConnected && typeof (this._browser as any).disconnect === 'function') {
+            ;(this._browser as any).disconnect()
+          } else {
+            await this._browser.close()
+          }
+        } catch (err) {
+          logger.warn(`Error closing/disconnecting browser: ${err}`)
+        }
+
         this._browser = null
       }
 
@@ -220,6 +250,28 @@ export class PuppeteerBrowserManager implements BrowserManager {
         pageFunction: string | Function,
         ...args: unknown[]
       ): Promise<T> {
+        // Some runtimes (tsx/swc) may inject helper identifiers like __name into
+        // the transpiled function source. When Puppeteer serializes the function
+        // into the page context those helpers are not defined and cause runtime
+        // errors like "__name is not defined". To avoid this, we attempt to
+        // sanitize the function source and recreate a plain Function before
+        // passing it to page.evaluate.
+        if (typeof pageFunction === 'function') {
+          try {
+            let src = pageFunction.toString()
+            // Remove common transpiler-injected helper identifiers
+            src = src.replace(/\b__name\b/g, '')
+
+            // Recreate a plain function from the sanitized source
+            // eslint-disable-next-line no-new-func
+            const fn = new Function(`return (${src})`)()
+            return await page.evaluate(fn as any, ...args)
+          } catch (err) {
+            logger.warn(`evaluate helper sanitized function failed: ${err}. Falling back to original function.`)
+            return await page.evaluate(pageFunction as any, ...args)
+          }
+        }
+
         return page.evaluate(pageFunction as any, ...args)
       },
 

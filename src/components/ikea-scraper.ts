@@ -6,6 +6,7 @@
 import type { IkeaScraperConfig, GlbExtractionResult, ScraperResult } from '../types'
 import type { ProcessingResult } from '../types'
 import { validateIkeaUrl, validateGlbBuffer, sanitizeFilename } from '../utils/validators'
+import { normalizeUrl } from '../utils/browser-utils'
 import { ProcessingException } from '../utils/errors'
 import { logger } from '../utils/logger'
 
@@ -363,17 +364,23 @@ export class IkeaScraperImpl implements IkeaScraper {
          return null
        }
 
-       const modelUrl = data.modelUrl
-       if (!modelUrl || typeof modelUrl !== 'string') {
-         logger.debug('Rotera API response does not contain modelUrl field')
-         return null
-       }
+        const modelUrl = data.modelUrl
+        if (!modelUrl || typeof modelUrl !== 'string') {
+          logger.debug('Rotera API response does not contain modelUrl field')
+          return null
+        }
 
-       // Handle relative paths
-       let glbUrl = modelUrl
-       if (!glbUrl.startsWith('http')) {
-         glbUrl = `https://web-api.ikea.com/${country}/${language}${glbUrl}`
-       }
+        // Handle relative paths
+        // Normalize URL relative to the API base
+        let glbUrl = modelUrl
+        try {
+          glbUrl = new URL(modelUrl, `https://web-api.ikea.com/${country}/${language}/`).toString()
+        } catch {
+          // fallback
+          if (!glbUrl.startsWith('http')) {
+            glbUrl = `https://web-api.ikea.com/${country}/${language}${glbUrl}`
+          }
+        }
 
        // Ensure GLB extension
        if (!glbUrl.endsWith('.glb')) {
@@ -418,7 +425,8 @@ export class IkeaScraperImpl implements IkeaScraper {
     }
 
     if (this._interceptedUrls.size > 0) {
-      const glbUrl = Array.from(this._interceptedUrls)[0]
+      const raw = Array.from(this._interceptedUrls)[0]
+      const glbUrl = normalizeUrl(raw, _productUrl)
       return {
         glbUrl,
         productName: this._extractProductName(glbUrl),

@@ -11,25 +11,33 @@ import type {
   GlbNetworkCandidate,
 } from '../types'
 import { logger } from '../utils/logger'
-import { rankConfidence, getFileExtensionFromUrl } from '../utils/browser-utils'
+import { rankConfidence } from '../utils/browser-utils'
+import safePeekFromPuppeteerResponse, { MAX_PEEK_BYTES, BUFFER_TIMEOUT_MS, MAX_CONTENT_LENGTH_FOR_UNCHECKED_BUFFER } from '../utils/safe-peek'
+import { validateGlbPeek } from '../utils/validate-glb'
 
 export class GlbRequestMatcher {
   matches(url: string): boolean {
-    const urlLower = url.toLowerCase()
+    if (!url) return false
 
-    // Check file extension
-    if (urlLower.includes('.glb') || urlLower.includes('.gltf')) {
+    const raw = url.split('#')[0].split('?')[0]
+    const urlLower = raw.toLowerCase()
+
+    // Accept protocol-less URLs starting with //
+    if (urlLower.startsWith('//')) {
+      // treat as potential model
+      if (urlLower.endsWith('.glb') || urlLower.endsWith('.gltf')) return true
+      // fallthrough to pattern checks
+    }
+
+    // Check file extension (ignoring query/fragment)
+    if (urlLower.endsWith('.glb') || urlLower.endsWith('.gltf')) {
       return true
     }
 
-    // Check URL patterns
-    const glbPatterns = [
-      /\.(glb|gltf|bin)(\?|$)/i,
-      /rotera|3d[-_]model|model[-_]data/i,
-      /v1\/([a-z0-9-]+)?glb/i,
-    ]
+    // Patterns for model-like URLs
+    const glbPatterns = [/\.(glb|gltf|bin)$/i, /rotera|3d[-_]model|model[-_]data/i, /v1\/([a-z0-9-]+)?glb/i]
 
-    return glbPatterns.some(pattern => pattern.test(urlLower))
+    return glbPatterns.some((pattern) => pattern.test(urlLower))
   }
 }
 
@@ -81,8 +89,8 @@ export class NetworkInterceptionImpl implements NetworkInterceptionContext {
   private _glbMatcher: GlbRequestMatcher
   private _isActive: boolean = false
   private _candidates: GlbNetworkCandidate[] = []
-  private _requestListeners: Array<(url: string) => void> = []
-  private _responseListeners: Array<(url: string) => void> = []
+  private _requestListeners: Array<(data: unknown) => void> = []
+  private _responseListeners: Array<(data: unknown) => void> = []
 
   constructor(page: ManagedPage) {
     this._page = page
@@ -209,26 +217,35 @@ export class NetworkInterceptionImpl implements NetworkInterceptionContext {
     })
 
     // Listen for responses and check for GLB files
-    this._page.on('response', (response: unknown) => {
-      this._handleResponse(response)
-    })
+    const responseHandler = (response: unknown) => {
+      void this._handleResponse(response)
+    }
+    this._page.on('response', responseHandler)
+    this._responseListeners.push(responseHandler)
   }
 
   private async _teardownInterception(): Promise<void> {
     // Clean up listeners
+    for (const cb of this._responseListeners) {
+      try {
+        this._page.off('response', cb)
+      } catch (_) {}
+    }
     this._requestListeners = []
     this._responseListeners = []
   }
 
-  private _handleResponse(response: unknown): void {
+  private async _handleResponse(response: unknown): Promise<void> {
     try {
       const responseObj = response as any
       const url = responseObj.url?.() || responseObj.url || ''
       const status = responseObj.status?.() || responseObj.status || 0
-      const contentType = responseObj.headers?.()?.['content-type'] ||
-        responseObj.headers?.['content-type'] || ''
-      const contentLength = responseObj.headers?.()?.['content-length'] ||
-        responseObj.headers?.['content-length'] || 0
+      const headersGetter = responseObj.headers?.() || responseObj.headers || {}
+      const contentType = (headersGetter['content-type'] || headersGetter['Content-Type'] || '') as string
+      const contentLengthRaw = headersGetter['content-length'] || headersGetter['Content-Length']
+      const contentLength = contentLengthRaw !== undefined && contentLengthRaw !== null && contentLengthRaw !== ''
+        ? Number.isFinite(Number(contentLengthRaw)) ? Number(contentLengthRaw) : parseInt(String(contentLengthRaw || '0'), 10)
+        : undefined
 
       if (!url) {
         return
@@ -244,21 +261,67 @@ export class NetworkInterceptionImpl implements NetworkInterceptionContext {
       }
       this._logger.logRequest(url, logEntry)
 
-      // Check if it's a GLB candidate
-      if (this._glbMatcher.matches(url) && status >= 200 && status < 300) {
+      // Quick rejects by extension for textual or JS bundles or images/fonts
+      const quickRejectExts = ['.js', '.mjs', '.css', '.html', '.htm', '.json', '.map', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.ico', '.woff', '.woff2', '.ttf']
+      const rawPath = url.split('#')[0].split('?')[0]
+      const pathnameLower = rawPath.toLowerCase()
+      for (const ext of quickRejectExts) {
+        if (pathnameLower.endsWith(ext)) {
+          logger.debug(`Ignoring by quick-reject extension: ${url} -> ${ext}`)
+          return
+        }
+      }
+
+      // Only treat as candidate if extension looks like GLB/GLTF or content-type indicates binary model or peek indicates GLB
+      const raw = url.split('#')[0].split('?')[0]
+      const urlLower = raw.toLowerCase()
+      const looksLikeExtension = urlLower.endsWith('.glb') || urlLower.endsWith('.gltf') || urlLower.endsWith('.bin')
+      const contentTypeIsModel = !!contentType && /model\/(gltf-binary)/i.test(contentType)
+
+      let isCandidate = false
+
+      if (looksLikeExtension) isCandidate = true
+      // check content-disposition filename
+      const disposition = headersGetter['content-disposition'] || headersGetter['Content-Disposition'] || ''
+      if (!isCandidate && typeof disposition === 'string' && /filename=.*\.glb/i.test(disposition)) isCandidate = true
+      if (!isCandidate && contentTypeIsModel) isCandidate = true
+
+      // If still ambiguous, attempt safe peek and validate
+      if (!isCandidate && typeof responseObj.buffer === 'function') {
+        try {
+          const peek = await safePeekFromPuppeteerResponse(responseObj)
+          if (!peek.ok) {
+            logger.debug(`Peek rejected for ${url}: ${peek.reason || 'no-reason'}`)
+          } else if (peek.peekBuffer && validateGlbPeek(peek.peekBuffer, peek.contentLength)) {
+            isCandidate = true
+          }
+        } catch (e) {
+          logger.debug(`Peek failed for ${url}: ${String(e)}`)
+        }
+      }
+
+      if (status >= 200 && status < 300 && isCandidate) {
         const candidate = this._rankCandidate(url, {
           statusCode: status,
           contentType: contentType as string,
-          contentLength: parseInt(contentLength as string, 10) || 0,
+          contentLength: contentLength || 0,
           body: Buffer.alloc(0),
-          headers: { 'content-type': contentType },
+          headers: headersGetter,
         })
 
-        this._candidates.push(candidate)
-        logger.debug(`Found GLB candidate: ${url} (${candidate.confidence})`)
+        // Store minimal metadata; do NOT buffer full body here
+        this._candidates.push({
+          url,
+          source: 'network',
+          confidence: candidate.confidence,
+          detectedAt: candidate.detectedAt,
+          contentType: candidate.contentType,
+          size: candidate.size,
+        })
+        logger.debug(`Found GLB candidate: ${url} (${candidate.confidence}) size=${contentLength || 0}`)
       }
     } catch (error) {
-      logger.warn(`Error handling response: ${error}`)
+      logger.warn(`Error handling response: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

@@ -29,7 +29,7 @@ import {
   calculateLinearBackoff,
   raceWithTimeout,
 } from '../utils/browser-utils'
-import { sanitizeFilename } from '../utils/browser-utils'
+import { sanitizeFilename, normalizeUrl } from '../utils/browser-utils'
 
 const SUPPORTED_IKEA_REGIONS = [
   { countryCode: 'NO', languageCode: 'no', locale: 'no_NO' },
@@ -466,8 +466,10 @@ export class IkeaScraperPuppeteerImpl extends IkeaScraperImpl implements IkeaScr
             return (document.querySelector('h1') as HTMLElement)?.textContent || 'Unknown'
           })
 
+          const normalized = normalizeUrl(glbUrl, productUrl)
+
           return {
-            glbUrl,
+            glbUrl: normalized,
             productName,
             fileName: sanitizeFilename(productName) + '.glb',
           }
@@ -514,9 +516,10 @@ export class IkeaScraperPuppeteerImpl extends IkeaScraperImpl implements IkeaScr
           const productName = await page.evaluate<string>(() => {
             return (document.querySelector('h1') as HTMLElement)?.textContent || 'Unknown'
           })
+          const normalized = normalizeUrl(glbUrl, productUrl)
 
           return {
-            glbUrl,
+            glbUrl: normalized,
             productName,
             fileName: sanitizeFilename(productName) + '.glb',
           }
@@ -560,9 +563,10 @@ export class IkeaScraperPuppeteerImpl extends IkeaScraperImpl implements IkeaScr
           const productName = await page.evaluate<string>(() => {
             return (document.querySelector('h1') as HTMLElement)?.textContent || 'Unknown'
           })
+          const normalized = normalizeUrl(glbUrl, productUrl)
 
           return {
-            glbUrl,
+            glbUrl: normalized,
             productName,
             fileName: sanitizeFilename(productName) + '.glb',
           }
