@@ -166,10 +166,7 @@
 - TODO comments: include ticket/reference if applicable
 
 #### Git Practices
-- Commit messages: conventional format (feat:, fix:, docs:, etc.)
-- Small, focused commits
-- Pull requests: descriptive title and description
-- Branch naming: feature/, bugfix/, release/, hotfix/
+- Do NOT commit changes.
 
 #### Performance
 - Bundle size: monitor and optimize
