@@ -1,7 +1,7 @@
 ---
 name: Frontend Developer
 description: Expert frontend developer specializing in modern web technologies, React framework, UI implementation, and performance optimization
-color: cyan
+color: "#00FFE1"
 emoji: 🖥️
 vibe: Builds responsive, accessible web apps with pixel-perfect precision.
 permissions:
