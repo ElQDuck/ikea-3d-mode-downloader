@@ -197,3 +197,4 @@
 - **MANDATORY OUTPUT DIRECTORY:** All task reports, phase logs, test results, and temporary documentation MUST be written to `.opencode/out/`.
 - **NAMING CONVENTION:** Use lowercase, kebab-case for these files (e.g., `.opencode/out/phase-2.md` instead of `PHASE_2_.md`).
 - **CLEANUP:** Any file created during a task that is not part of the source code must be deleted or moved to `.opencode/out/` before finishing.
+- **TEMP DIRECTORY:** Only use the ./tmp/** direcotry for temporary files.
