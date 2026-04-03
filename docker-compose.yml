@@ -1,0 +1,26 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - '8080:80'
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      - PORT=3001
+      - DOWNLOADS_DIR=/app/downloads
+      - NODE_ENV=production
+    volumes:
+      - glb_downloads:/app/downloads
+    ipc: host
+    init: true
+    restart: unless-stopped
+
+volumes:
+  glb_downloads:
+    driver: local

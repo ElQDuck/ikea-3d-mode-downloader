@@ -1,1 +1,0 @@
-All agent are from: https://github.com/msitarzewski/agency-agents?tab=readme-ov-file
