@@ -38,6 +38,28 @@ router.get('/status/:id', (req: Request, res: Response) => {
   res.json(job);
 });
 
+router.get('/preview/:id', (req: Request, res: Response) => {
+  const job = getJob(req.params.id);
+  if (!job || job.status !== 'done' || !job.filename) {
+    res.status(404).json({ error: 'File not ready' });
+    return;
+  }
+
+  const filePath = path.join(DOWNLOADS_DIR, job.filename);
+  if (!fs.existsSync(filePath)) {
+    res.status(404).json({ error: 'File missing from disk' });
+    return;
+  }
+
+  res.setHeader('Content-Type', 'model/gltf-binary');
+  res.setHeader('Cache-Control', 'no-store');
+
+  const stream = fs.createReadStream(filePath);
+  stream.pipe(res);
+  stream.on('error', () => res.status(500).end());
+  // No deletion — file lives until /download/:id is called
+});
+
 router.get('/download/:id', (req: Request, res: Response) => {
   const job = getJob(req.params.id);
   if (!job || job.status !== 'done' || !job.filename) {
