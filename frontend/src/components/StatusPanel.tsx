@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { Job } from '../App'
 import ModelViewer from './ModelViewer'
 
@@ -30,6 +30,7 @@ export default function StatusPanel({ job, onJobUpdate, onReset }: Props) {
   const isDone = job.status === 'done'
   const isError = job.status === 'error'
   const isActive = !isDone && !isError
+  const [converting, setConverting] = useState(false)
 
   useEffect(() => {
     if (!isActive || !job.id) return
@@ -47,6 +48,32 @@ export default function StatusPanel({ job, onJobUpdate, onReset }: Props) {
 
   const color = STATUS_COLORS[job.status] ?? '#888'
   const label = STATUS_LABELS[job.status] ?? job.status.toUpperCase()
+
+  async function downloadZip() {
+    if (!job.id) return
+    setConverting(true)
+    try {
+      const resp = await fetch(`/api/convert/${job.id}`)
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => 'Conversion failed')
+        alert(`Error: ${t}`)
+        return
+      }
+      const blob = await resp.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = (job.filename ?? 'model.glb').replace(/\.glb$/i, '.zip')
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (e) {
+      alert(`Conversion error: ${(e as Error).message}`)
+    } finally {
+      setConverting(false)
+    }
+  }
 
   return (
     <div
@@ -72,23 +99,42 @@ export default function StatusPanel({ job, onJobUpdate, onReset }: Props) {
       {isDone && (
         <>
           <ModelViewer jobId={job.id} filename={job.filename ?? 'model.glb'} />
-          <a
-            href={`/api/download/${job.id}`}
-            download={job.filename}
-            style={{
-              display: 'inline-block',
-              marginTop: 12,
-              padding: '9px 18px',
-              background: '#0058a3',
-              color: '#fff',
-              borderRadius: 4,
-              textDecoration: 'none',
-              fontWeight: 600,
-              fontSize: '0.95rem',
-            }}
-          >
-            Download {job.filename ?? 'model.glb'}
-          </a>
+          <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
+            <a
+              href={`/api/download/${job.id}`}
+              download={job.filename}
+              style={{
+                display: 'inline-block',
+                padding: '9px 18px',
+                background: '#0058a3',
+                color: '#fff',
+                borderRadius: 4,
+                textDecoration: 'none',
+                fontWeight: 600,
+                fontSize: '0.95rem',
+              }}
+            >
+              Download {job.filename ?? 'model.glb'}
+            </a>
+
+            {/* Button to download converted OBJ+MTL+textures ZIP (calls /api/convert/:id) */}
+            <button
+              onClick={downloadZip}
+              disabled={converting}
+              style={{
+                padding: '9px 18px',
+                background: '#27ae60',
+                color: '#fff',
+                borderRadius: 4,
+                border: 'none',
+                fontWeight: 600,
+                cursor: converting ? 'default' : 'pointer',
+                fontSize: '0.95rem',
+              }}
+            >
+              {converting ? 'Converting…' : 'Download OBJ + Textures (ZIP)'}
+            </button>
+          </div>
         </>
       )}
 
