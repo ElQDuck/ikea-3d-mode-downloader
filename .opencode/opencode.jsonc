@@ -1,11 +1,13 @@
 {
-    "mcpServers": {
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": {
         "playwright": {
             "command": "npx",
             "args": [
                 "-y",
                 "@modelcontextprotocol/server-playwright"
-            ]
+            ],
+            "enabled": true
         }
     }
 }
