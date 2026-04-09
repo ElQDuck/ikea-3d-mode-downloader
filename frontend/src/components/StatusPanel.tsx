@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import type { Job } from '../App'
+import ModelViewer from './ModelViewer'
 
 interface Props {
   job: Job
@@ -69,23 +70,26 @@ export default function StatusPanel({ job, onJobUpdate, onReset }: Props) {
       )}
 
       {isDone && (
-        <a
-          href={`/api/download/${job.id}`}
-          download={job.filename}
-          style={{
-            display: 'inline-block',
-            marginTop: 12,
-            padding: '9px 18px',
-            background: '#0058a3',
-            color: '#fff',
-            borderRadius: 4,
-            textDecoration: 'none',
-            fontWeight: 600,
-            fontSize: '0.95rem',
-          }}
-        >
-          Download {job.filename ?? 'model.glb'}
-        </a>
+        <>
+          <ModelViewer jobId={job.id} filename={job.filename ?? 'model.glb'} />
+          <a
+            href={`/api/download/${job.id}`}
+            download={job.filename}
+            style={{
+              display: 'inline-block',
+              marginTop: 12,
+              padding: '9px 18px',
+              background: '#0058a3',
+              color: '#fff',
+              borderRadius: 4,
+              textDecoration: 'none',
+              fontWeight: 600,
+              fontSize: '0.95rem',
+            }}
+          >
+            Download {job.filename ?? 'model.glb'}
+          </a>
+        </>
       )}
 
       {isError && (
