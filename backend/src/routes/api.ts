@@ -156,16 +156,22 @@ router.get('/convert/:id', async (req: Request, res: Response) => {
       // collect textures referenced in the MTL if present
       if (fs.existsSync(mtlPath)) {
         let mtlText = fs.readFileSync(mtlPath, 'utf8');
-        // Normalize any map_Kd paths to basenames because Blender may emit paths
+        // Normalize texture references in the MTL to basenames so the ZIP is consistent.
+        // Handle map_* entries and common texture tokens like bump, disp, decal, etc.
         mtlText = mtlText
           .split(/\r?\n/)
           .map((line) => {
-            const m = line.match(/^(map_Kd)\s+(.*)$/);
+            // match tokens like: map_Kd <opts> filename, map_Ks filename, bump <opts> filename
+            const m = line.match(/^(map_\w+|bump|disp|decal)\b(.*)$/i);
             if (m) {
               const key = m[1];
-              const full = m[2].trim();
-              const b = path.basename(full);
-              textures.push({ filename: b });
+              const rest = m[2].trim();
+              // In many MTLs there may be options before the filename (e.g. -o 1 1 1 texture.png)
+              // Take the last whitespace-separated token as the filename
+              const tokens = rest.split(/\s+/).filter(Boolean);
+              const full = tokens.length ? tokens[tokens.length - 1] : rest;
+              const b = path.basename(full || '');
+              if (b) textures.push({ filename: b });
               return `${key} ${b}`;
             }
             return line;
@@ -200,6 +206,25 @@ router.get('/convert/:id', async (req: Request, res: Response) => {
       const p = path.join(tmpDir, t.filename);
       // If file doesn't exist, skip it silently (Blender may embed textures)
       if (fs.existsSync(p)) archive.file(p, { name: t.filename });
+    }
+
+    // Fallback: include any image files found in tmpDir (png/jpg/jpeg/gif/bmp)
+    // This helps when Blender exported images but MTL parsing missed them.
+    const imgExt = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tga', '.ktx2', '.ktx'];
+    try {
+      const files = fs.readdirSync(tmpDir);
+      for (const f of files) {
+        const ext = path.extname(f).toLowerCase();
+        if (imgExt.includes(ext)) {
+          const p = path.join(tmpDir, f);
+          // Avoid double-adding files we've already added via textures list
+          if (!textures.find((t) => t.filename === f)) {
+            archive.file(p, { name: f });
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
     }
 
     await archive.finalize();
