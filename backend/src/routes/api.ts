@@ -154,32 +154,151 @@ router.get('/convert/:id', async (req: Request, res: Response) => {
     const textures: { filename: string; data?: Buffer }[] = [];
     if (fs.existsSync(objPath)) {
       // collect textures referenced in the MTL if present
-      if (fs.existsSync(mtlPath)) {
-        let mtlText = fs.readFileSync(mtlPath, 'utf8');
-        // Normalize texture references in the MTL to basenames so the ZIP is consistent.
-        // Handle map_* entries and common texture tokens like bump, disp, decal, etc.
-        mtlText = mtlText
-          .split(/\r?\n/)
-          .map((line) => {
-            // match tokens like: map_Kd <opts> filename, map_Ks filename, bump <opts> filename
-            const m = line.match(/^(map_\w+|bump|disp|decal)\b(.*)$/i);
-            if (m) {
-              const key = m[1];
-              const rest = m[2].trim();
-              // In many MTLs there may be options before the filename (e.g. -o 1 1 1 texture.png)
-              // Take the last whitespace-separated token as the filename
-              const tokens = rest.split(/\s+/).filter(Boolean);
-              const full = tokens.length ? tokens[tokens.length - 1] : rest;
-              const b = path.basename(full || '');
-              if (b) textures.push({ filename: b });
-              return `${key} ${b}`;
+    // Process all .mtl files Blender might have written in tmpDir — be defensive
+    try {
+      const mtlFiles = fs.readdirSync(tmpDir).filter((f) => f.toLowerCase().endsWith('.mtl'));
+      const imageFiles = (() => {
+        try {
+          return fs.readdirSync(tmpDir).filter((f) => {
+            const e = path.extname(f).toLowerCase();
+            return ['.png', '.jpg', '.jpeg', '.tga', '.bmp'].includes(e);
+          });
+        } catch (e) {
+          return [] as string[];
+        }
+      })();
+
+      const prefer = ['basecolor', 'base_color', 'base-color', 'albedo', 'diffuse', 'color', 'kd'];
+      const pickDiffuse = () => {
+        for (const p of prefer) {
+          const found = imageFiles.find((x) => x.toLowerCase().includes(p));
+          if (found) return found;
+        }
+        return imageFiles[0] as string | undefined;
+      };
+
+      const allowedLine = /^(#.*|newmtl\s+.+|Ns\s+.+|Ka\s+.+|Kd\s+.+|Ks\s+.+|Ke\s+.+|Ni\s+.+|d\s+.+|illum\s+.+|map_\w+\b.*|bump\b.*|disp\b.*|decal\b.*)$/i;
+
+      for (const mfile of mtlFiles) {
+        const mpath = path.join(tmpDir, mfile);
+        let mtlText = fs.readFileSync(mpath, 'utf8');
+        const lines = mtlText.split(/\r?\n/);
+        const outLines: string[] = [];
+        const referenced: string[] = [];
+
+        for (let line of lines) {
+          if (!line || line.trim().length === 0) {
+            outLines.push(line);
+            continue;
+          }
+          if (!allowedLine.test(line)) {
+            continue; // drop garbage
+          }
+
+          const m = line.match(/^(map_\w+|bump|disp|decal)\b(.*)$/i);
+          if (m) {
+            const key = m[1];
+            const rest = m[2].trim();
+            const tokens = rest.split(/\s+/).filter(Boolean);
+            const full = tokens.length ? tokens[tokens.length - 1] : rest;
+            const b = path.basename(full || '');
+            // If the filename token is valid and exists in our imageFiles, keep it.
+            if (b && b !== '.' && imageFiles.includes(b)) {
+              referenced.push(b);
+              outLines.push(`${key} ${b}`);
+            } else {
+              // If this is the diffuse slot, try to inject a reasonable diffuse image
+              if (/^map_Kd$/i.test(key)) {
+                const diffuse = pickDiffuse();
+                if (diffuse) {
+                  referenced.push(diffuse);
+                  outLines.push(`map_Kd ${diffuse}`);
+                }
+                // otherwise drop the invalid map_Kd line
+              }
+              // For other map types (bump, disp, etc.) we skip invalid entries to avoid
+              // leaving lines like "map_Bump ." which break some importers.
             }
-            return line;
-          })
-          .join('\n');
-        // Overwrite mtl file with normalized entries so the ZIP is consistent
-        fs.writeFileSync(mtlPath, mtlText, 'utf8');
+            continue;
+          }
+
+          outLines.push(line);
+        }
+
+        const hasMapKd = outLines.some((L) => /^map_Kd\b/i.test(L));
+        if (!hasMapKd) {
+          const diffuse = pickDiffuse();
+          if (diffuse) {
+            let inserted = false;
+            for (let i = 0; i < outLines.length; i++) {
+              if (/^newmtl\b/i.test(outLines[i])) {
+                outLines.splice(i + 1, 0, `map_Kd ${diffuse}`);
+                referenced.push(diffuse);
+                inserted = true;
+                break;
+              }
+            }
+            if (!inserted) {
+              outLines.push(`map_Kd ${diffuse}`);
+              referenced.push(diffuse);
+            }
+          }
+        }
+
+        // Inject common auxiliary maps (normals -> bump, occlusion -> map_Ka) if we have matching images
+        const pickByCandidates = (candidates: string[]) => {
+          for (const p of candidates) {
+            const found = imageFiles.find((x) => x.toLowerCase().includes(p));
+            if (found) return found;
+          }
+          return undefined;
+        };
+
+        const normalCandidate = pickByCandidates(['normal', 'norm', 'nrm']);
+        const occlusionCandidate = pickByCandidates(['occlusion', 'ao', 'ambientocclusion']);
+
+        // Determine material block ranges so we insert per-material if missing
+        const materialIndices: number[] = [];
+        for (let i = 0; i < outLines.length; i++) {
+          if (/^newmtl\b/i.test(outLines[i])) materialIndices.push(i);
+        }
+        materialIndices.push(outLines.length); // sentinel for end
+
+        for (let mi = 0; mi < materialIndices.length - 1; mi++) {
+          const start = materialIndices[mi];
+          const end = materialIndices[mi + 1];
+          const block = outLines.slice(start, end);
+          const hasBump = block.some((L) => /^(bump|map_Bump)\b/i.test(L));
+          const hasMapKa = block.some((L) => /^map_Ka\b/i.test(L));
+
+          const insertPos = start + 1; // after newmtl
+          const inserts: string[] = [];
+          if (!hasBump && normalCandidate) {
+            inserts.push(`map_Bump ${normalCandidate}`);
+            referenced.push(normalCandidate);
+          }
+          if (!hasMapKa && occlusionCandidate) {
+            inserts.push(`map_Ka ${occlusionCandidate}`);
+            referenced.push(occlusionCandidate);
+          }
+
+          if (inserts.length > 0) {
+            // splice at correct position — adjust indices because we're mutating outLines
+            outLines.splice(insertPos, 0, ...inserts);
+            // adjust subsequent materialIndices positions to account for inserted lines
+            for (let k = mi + 1; k < materialIndices.length; k++) materialIndices[k] += inserts.length;
+          }
+        }
+
+        fs.writeFileSync(mpath, outLines.join('\n'), 'utf8');
+
+        for (const b of referenced) {
+          if (b) textures.push({ filename: b });
+        }
       }
+    } catch (e) {
+      // ignore — we'll still include any images found in tmpDir as a fallback
+    }
     }
 
     // Use Blender-produced files and give them friendly names in the ZIP
@@ -188,6 +307,20 @@ router.get('/convert/:id', async (req: Request, res: Response) => {
     const mtlFilename = `${baseName}.mtl`;
     const blenderObjPath = path.join(tmpDir, 'model.obj');
     const blenderMtlPath = path.join(tmpDir, 'model.mtl');
+
+    // If Blender wrote an OBJ that references 'model.mtl' (or other name), rewrite the OBJ
+    // so its mtllib points to the MTL name we will place in the ZIP (mtlFilename).
+    const modifiedObjPath = path.join(tmpDir, 'model.forzip.obj');
+    try {
+      if (fs.existsSync(blenderObjPath)) {
+        const objText = fs.readFileSync(blenderObjPath, 'utf8');
+        // Replace the first mtllib line to reference the final mtlFilename
+        const newObjText = objText.replace(/^mtllib\s+.*$/m, `mtllib ${mtlFilename}`);
+        fs.writeFileSync(modifiedObjPath, newObjText, 'utf8');
+      }
+    } catch (e) {
+      // if anything fails, fall back to using original blenderObjPath
+    }
 
     // Zip and stream
     const zipName = `${baseName}.zip`;
@@ -200,7 +333,8 @@ router.get('/convert/:id', async (req: Request, res: Response) => {
     });
     archive.pipe(res);
 
-    if (fs.existsSync(blenderObjPath)) archive.file(blenderObjPath, { name: objFilename });
+    if (fs.existsSync(modifiedObjPath)) archive.file(modifiedObjPath, { name: objFilename });
+    else if (fs.existsSync(blenderObjPath)) archive.file(blenderObjPath, { name: objFilename });
     if (fs.existsSync(blenderMtlPath)) archive.file(blenderMtlPath, { name: mtlFilename });
     for (const t of textures) {
       const p = path.join(tmpDir, t.filename);
